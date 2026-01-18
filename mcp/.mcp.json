@@ -1,0 +1,19 @@
+{
+  "herald": {
+    "context": {
+      "tags": [
+        "Spilno-me",
+        "ceda",
+        "ceda-70eaa4"
+      ],
+      "user": "oleksiiorlov",
+      "trust": "HIGH",
+      "source": "git",
+      "propagates": true,
+      "derived": true,
+      "derivedFrom": "git",
+      "storedAt": "2026-01-16T10:21:48.071Z",
+      "gitRemote": "github.com/Spilno-me/ceda"
+    }
+  }
+}

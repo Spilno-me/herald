@@ -1,0 +1,20 @@
+{
+  "name": "herald",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Pattern SDK for CEDA. Capture and retrieve patterns from anywhere.",
+  "scripts": {
+    "build": "pnpm -r build",
+    "dev": "pnpm -r dev",
+    "test": "pnpm -r test",
+    "lint": "pnpm -r lint",
+    "typecheck": "pnpm -r typecheck"
+  },
+  "keywords": ["herald", "ceda", "patterns", "sdk"],
+  "author": "",
+  "license": "ISC",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "packageManager": "pnpm@9.0.0"
+}

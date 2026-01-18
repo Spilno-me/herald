@@ -1,0 +1,24 @@
+{
+  "name": "herald-slack-app",
+  "version": "1.0.0",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "ts-node src/index.ts",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": ["slack", "herald", "patterns"],
+  "author": "",
+  "license": "ISC",
+  "description": "Herald Slack bot for capturing team conversation patterns",
+  "dependencies": {
+    "@slack/bolt": "^4.6.0",
+    "dotenv": "^17.2.3",
+    "ts-node": "^10.9.2"
+  },
+  "devDependencies": {
+    "@types/node": "^25.0.9",
+    "typescript": "^5.9.3"
+  }
+}
