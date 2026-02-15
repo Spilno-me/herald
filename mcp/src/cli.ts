@@ -994,8 +994,8 @@ async function callCedaAPI(endpoint: string, method = "GET", body?: Record<strin
   // Only add tenant params to endpoints that need them (patterns, session queries)
   // Don't add to simple endpoints like /api/stats, /health
   const needsTenantParams = endpoint.startsWith("/api/patterns") ||
-                            endpoint.startsWith("/api/session/") ||
-                            endpoint.startsWith("/api/observations");
+    endpoint.startsWith("/api/session/") ||
+    endpoint.startsWith("/api/observations");
   if (method === "GET" && needsTenantParams) {
     const separator = endpoint.includes("?") ? "&" : "?";
     url += `${separator}org=${HERALD_ORG}&project=${HERALD_PROJECT}&user=${HERALD_USER}`;
@@ -1833,6 +1833,94 @@ Returns all patterns for the current context (org/project/user) in the specified
       },
     },
   },
+  {
+    name: "herald_query_analytics",
+    description: "Query company analytics (metrics, trends, patterns, users) for data-driven insights.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        category: {
+          type: "string",
+          enum: ["metrics", "trends", "patterns", "users", "system"],
+          description: "Analytics category to query",
+        },
+        period: {
+          type: "string",
+          enum: ["day", "week", "month", "quarter", "year"],
+          description: "Time period for trends/metrics (optional)",
+        },
+        org: {
+          type: "string",
+          description: "Organization slug (optional, defaults to HERALD_ORG)",
+        },
+      },
+      required: ["category"],
+    },
+  },
+  {
+    name: "herald_query_reflections",
+    description: "Query captured reflections (patterns/antipatterns) to summarize past learnings.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        feeling: {
+          type: "string",
+          enum: ["success", "stuck"],
+          description: "Filter by feeling: success (patterns) or stuck (antipatterns)",
+        },
+        project: {
+          type: "string",
+          description: "Project slug (optional)",
+        },
+        limit: {
+          type: "number",
+          description: "Maximum number of reflections to return (default 50)",
+        },
+      },
+    },
+  },
+  {
+    name: "herald_scaffold_module",
+    description: "Scaffold a new module directory structure for EMEX-X application.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        module_name: {
+          type: "string",
+          description: "Slug of the module (e.g., 'visitor-management')",
+        },
+        display_name: {
+          type: "string",
+          description: "Human readable name (e.g., 'Visitor Management')",
+        },
+        description: {
+          type: "string",
+          description: "Detailed description of the module's purpose",
+        },
+        entities: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              name: { type: "string" },
+              fields: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    name: { type: "string" },
+                    type: { type: "string" },
+                    required: { type: "boolean" },
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      required: ["module_name", "display_name", "entities"],
+    },
+  },
 ];
 
 server.setRequestHandler(ListToolsRequestSchema, async () => {
@@ -1844,8 +1932,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 // ============================================
 
 // Helper to fetch patterns with cascade (reused from herald_patterns tool)
-async function fetchPatternsWithCascade(): Promise<{patterns: string[], antipatterns: string[], context: string}> {
-  type PatternEntry = {insight: string; scope?: string};
+async function fetchPatternsWithCascade(): Promise<{ patterns: string[], antipatterns: string[], context: string }> {
+  type PatternEntry = { insight: string; scope?: string };
   const seenInsights = new Set<string>();
   const patterns: string[] = [];
   const antipatterns: string[] = [];
@@ -1903,7 +1991,7 @@ server.setRequestHandler(ListResourcesRequestSchema, async () => {
   return { resources };
 });
 
-server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
+server.setRequestHandler(ReadResourceRequestSchema, async (request: any) => {
   const { uri } = request.params;
 
   if (uri === "herald://patterns") {
@@ -1978,7 +2066,7 @@ server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
   throw new Error(`Unknown resource: ${uri}`);
 });
 
-server.setRequestHandler(CallToolRequestSchema, async (request) => {
+server.setRequestHandler(CallToolRequestSchema, async (request: any) => {
   const { name, arguments: args } = request.params;
 
   try {
@@ -2739,7 +2827,7 @@ Herald will:
         // Query learned patterns with inheritance: user → project → org
         // More specific patterns take precedence over broader ones
         try {
-          type PatternEntry = {insight: string; signal?: string; reinforcement?: string; warning?: string; scope?: string};
+          type PatternEntry = { insight: string; signal?: string; reinforcement?: string; warning?: string; scope?: string };
 
           // Helper to dedupe patterns by insight text (first occurrence wins)
           const seenInsights = new Set<string>();
@@ -2777,7 +2865,7 @@ Herald will:
           }
 
           const metaResult = await callCedaAPI("/api/herald/meta-patterns");
-          const metaPatterns = (metaResult.metaPatterns as Array<{recommendedMethod: string; confidence: number}>) || [];
+          const metaPatterns = (metaResult.metaPatterns as Array<{ recommendedMethod: string; confidence: number }>) || [];
 
           // Build readable summary with scope indicators
           let summary = `## Learned Patterns for ${HERALD_USER}→${HERALD_PROJECT}→${HERALD_ORG}\n\n`;
@@ -2989,12 +3077,12 @@ Herald will:
       // CEDA-64: Herald Command Extensions - Handlers
       case "herald_session_reflections": {
         const summary = getSessionReflectionsSummary();
-        
+
         let message = `## Session Reflections Summary\n\n`;
         message += `**Total captured:** ${summary.count}\n`;
         message += `- Patterns (success): ${summary.patterns}\n`;
         message += `- Antipatterns (stuck): ${summary.antipatterns}\n\n`;
-        
+
         if (summary.reflections.length > 0) {
           message += `### Captured This Session:\n`;
           summary.reflections.forEach((r, i) => {
@@ -3004,7 +3092,7 @@ Herald will:
         } else {
           message += `No reflections captured yet. Use herald_reflect or herald_simulate to capture patterns.`;
         }
-        
+
         return {
           content: [{
             type: "text",
@@ -3263,6 +3351,135 @@ Herald will:
                 hint: "CEDA may be unavailable. Try again later.",
               }, null, 2)
             }],
+          };
+        }
+      }
+
+      case "herald_query_analytics": {
+        const category = args?.category as string;
+        const period = args?.period as string | undefined;
+        const org = (args?.org as string) || HERALD_ORG;
+
+        const params = new URLSearchParams();
+        if (period) params.set("period", period);
+        params.set("org", org);
+
+        const endpoint = `/api/analytics/${category}${params.toString() ? '?' + params.toString() : ''}`;
+        const result = await callCedaAPI(endpoint);
+
+        return {
+          content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+        };
+      }
+
+      case "herald_query_reflections": {
+        const feeling = args?.feeling as string | undefined;
+        const project = args?.project as string | undefined;
+        const limit = args?.limit as number | undefined;
+
+        const params = new URLSearchParams();
+        params.set("org", HERALD_ORG);
+        if (feeling) params.set("feeling", feeling);
+        if (project) params.set("project", project);
+        if (limit) params.set("limit", String(limit));
+
+        const result = await callCedaAPI(`/api/herald/reflections?${params.toString()}`);
+        return {
+          content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+        };
+      }
+
+      case "herald_search_knowledge": {
+        const query = args?.query as string;
+        const limit = (args?.limit as number) || 5;
+        const org = (args?.org as string) || HERALD_ORG;
+
+        const result = await callCedaAPI('/api/documents/search', {
+          method: 'POST',
+          body: JSON.stringify({
+            query,
+            org,
+            user: 'herald',
+            type: 'knowledge',
+            limit,
+          }),
+        });
+
+        return {
+          content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+        };
+      }
+
+      case "herald_scaffold_module": {
+        const moduleName = args?.module_name as string;
+        const displayName = args?.display_name as string;
+        const entities = (args?.entities as any[]) || [];
+
+        // Determine emex-x-application root relative to this file
+        // Current file: herald/mcp/src/cli.ts
+        // Goal: emex-x-application/modules/[moduleName]
+        const emexRoot = join(dirname(dirname(dirname(dirname(process.cwd())))), "emex-x-application");
+        const moduleDir = join(emexRoot, "modules", moduleName);
+        const srcDir = join(moduleDir, "src");
+        const filesDir = join(srcDir, "files");
+        const configDir = join(filesDir, "config");
+
+        try {
+          if (!existsSync(moduleDir)) mkdirSync(moduleDir, { recursive: true });
+          if (!existsSync(srcDir)) mkdirSync(srcDir, { recursive: true });
+          if (!existsSync(filesDir)) mkdirSync(filesDir, { recursive: true });
+          if (!existsSync(configDir)) mkdirSync(configDir, { recursive: true });
+
+          // Generate module.yml
+          const moduleYml = `name: ${displayName}\nversion: 1.0.0\ndescription: ${args?.description || displayName}\nentities: ${JSON.stringify(entities.map(e => e.name))}`;
+          writeFileSync(join(configDir, "module.yml"), moduleYml);
+
+          // Generate seed.ts
+          const seedTs = `
+import { createFileUtils, createModuleEntryPoint } from '@disrupt/module-installer';
+import type { PrismaClient } from 'emex-prisma';
+
+export async function seed(prisma: PrismaClient): Promise<void> {
+  const fileUtils = createFileUtils({
+    modulePath: 'modules/${moduleName}'
+  });
+
+  const config = await fileUtils.readYmlFile('config/module.yml');
+  console.log(\`Seeding module: \${config.name}\`);
+
+  // Auto-generated entity seeding placeholders
+  ${entities.map(entity => `
+  // Seed ${entity.name}
+  // await prisma.${entity.name.toLowerCase()}.create({ data: { ... } });`).join("\n")}
+
+  console.log('✅ ${displayName} seeded successfully');
+}
+
+createModuleEntryPoint(seed, {
+  modulePath: 'modules/${moduleName}'
+});
+`;
+          writeFileSync(join(srcDir, "seed.ts"), seedTs.trim());
+
+          return {
+            content: [{
+              type: "text",
+              text: JSON.stringify({
+                success: true,
+                message: `Module ${moduleName} scaffolded successfully`,
+                path: moduleDir
+              }, null, 2)
+            }]
+          };
+        } catch (error) {
+          return {
+            content: [{
+              type: "text",
+              text: JSON.stringify({
+                success: false,
+                error: `Failed to scaffold module: ${error}`
+              }, null, 2)
+            }]
           };
         }
       }
