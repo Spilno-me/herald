@@ -1,0 +1,5 @@
+packages:
+  - mcp
+  - sdk
+  - slack
+  - telegram
