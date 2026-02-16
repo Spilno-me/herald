@@ -468,7 +468,7 @@ const HERALD_VAULTS_PATH = process.env.HERALD_VAULTS_PATH || join(homedir(), "Do
 // Cloud mode: Use CEDA API for vault communication instead of local files
 const HERALD_VAULTS_CLOUD = process.env.HERALD_VAULTS_CLOUD === "true";
 
-const VERSION = "1.36.0";
+const VERSION = "1.36.5";
 
 // Self-routing description - teaches Claude when to call Herald
 const HERALD_DESCRIPTION = `AI-native pattern learning for CEDA.
