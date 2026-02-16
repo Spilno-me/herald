@@ -1417,6 +1417,7 @@ Example flow:
         context: { type: "string", description: "Additional context" },
         session_id: { type: "string", description: "Session ID for multi-turn" },
         participant: { type: "string", description: "Participant name" },
+        engagement_context: { type: "object", description: "Learned preferences and context from EMEX engagement history" },
       },
       required: ["signal"],
     },
@@ -1431,6 +1432,7 @@ Example flow:
         refinement: { type: "string", description: "Refinement instruction" },
         context: { type: "string", description: "Additional context" },
         participant: { type: "string", description: "Participant name" },
+        engagement_context: { type: "object", description: "Learned preferences and context from EMEX engagement history" },
       },
       required: ["session_id", "refinement"],
     },
@@ -1853,6 +1855,11 @@ Returns all patterns for the current context (org/project/user) in the specified
           type: "string",
           description: "Organization slug (optional, defaults to HERALD_ORG)",
         },
+        include_visualization: {
+          type: "boolean",
+          description: "When true, include chart/visualization as image content alongside text (if available)",
+        },
+        engagement_context: { type: "object", description: "Learned preferences and context from EMEX engagement history" },
       },
       required: ["category"],
     },
@@ -1897,6 +1904,7 @@ Returns all patterns for the current context (org/project/user) in the specified
           type: "string",
           description: "Organization slug (optional, defaults to HERALD_ORG)",
         },
+        engagement_context: { type: "object", description: "Learned preferences and context from EMEX engagement history" },
       },
       required: ["query"],
     },
@@ -2090,6 +2098,19 @@ server.setRequestHandler(ReadResourceRequestSchema, async (request: any) => {
 
 server.setRequestHandler(CallToolRequestSchema, async (request: any) => {
   const { name, arguments: args } = request.params;
+  const progressToken = request.params._meta?.progressToken as string | number | undefined;
+
+  async function emitProgress(progress: number, total: number): Promise<void> {
+    if (!progressToken) return;
+    try {
+      await server.notification({
+        method: "notifications/progress",
+        params: { progressToken, progress, total },
+      });
+    } catch {
+      // Progress notification failed — non-critical, continue
+    }
+  }
 
   try {
     switch (name) {
@@ -2317,23 +2338,28 @@ Herald will:
         const contextStr = args?.context as string | undefined;
         const sessionId = args?.session_id as string | undefined;
         const participant = args?.participant as string | undefined;
+        const engagementCtx = args?.engagement_context as Record<string, unknown> | undefined;
 
         // Convert string context to CEDA's expected array format
-        const context = contextStr
-          ? [{ type: "user_context", value: contextStr, source: "herald" }]
-          : undefined;
+        const context: Array<Record<string, unknown>> = [];
+        if (contextStr) context.push({ type: "user_context", value: contextStr, source: "herald" });
+        if (engagementCtx) context.push({ type: "engagement_context", value: JSON.stringify(engagementCtx), source: "emex" });
 
+        await emitProgress(1, 3);
         const result = await callCedaAPI("/api/predict", "POST", {
           input: signal,
-          context,
+          context: context.length > 0 ? context : undefined,
           sessionId,
           participant,
           config: { enableAutoFix: true, maxAutoFixAttempts: 3 },
         });
+        await emitProgress(2, 3);
 
-        return {
+        const response = {
           content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
         };
+        await emitProgress(3, 3);
+        return response;
       }
 
       case "herald_refine": {
@@ -2341,22 +2367,27 @@ Herald will:
         const refinement = args?.refinement as string;
         const contextStr = args?.context as string | undefined;
         const participant = args?.participant as string | undefined;
+        const engagementCtx = args?.engagement_context as Record<string, unknown> | undefined;
 
         // Convert string context to CEDA's expected array format
-        const context = contextStr
-          ? [{ type: "user_context", value: contextStr, source: "herald" }]
-          : undefined;
+        const context: Array<Record<string, unknown>> = [];
+        if (contextStr) context.push({ type: "user_context", value: contextStr, source: "herald" });
+        if (engagementCtx) context.push({ type: "engagement_context", value: JSON.stringify(engagementCtx), source: "emex" });
 
+        await emitProgress(1, 3);
         const result = await callCedaAPI("/api/refine", "POST", {
           sessionId,
           refinement,
-          context,
+          context: context.length > 0 ? context : undefined,
           participant,
         });
+        await emitProgress(2, 3);
 
-        return {
+        const response = {
           content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
         };
+        await emitProgress(3, 3);
+        return response;
       }
 
       case "herald_session": {
@@ -2996,13 +3027,16 @@ Herald will:
 
         try {
           // Build prompt and call AI for reflection (use sanitized input)
+          await emitProgress(1, 4);
           const prompt = buildReflectionPrompt(simSanitizedSession, feeling, simSanitizedInsight);
           const extracted = await callAIForReflection(aiClient, prompt);
+          await emitProgress(2, 4);
 
           // Sanitize AI-extracted fields too
           const sanitizedSignal = sanitize(extracted.signal || "").sanitizedText;
           const sanitizedReinforcement = extracted.reinforcement ? sanitize(extracted.reinforcement).sanitizedText : undefined;
           const sanitizedWarning = extracted.warning ? sanitize(extracted.warning).sanitizedText : undefined;
+          await emitProgress(3, 4);
 
           // Send enriched data to CEDA (all sanitized)
           const result = await callCedaAPI("/api/herald/reflect", "POST", {
@@ -3057,6 +3091,7 @@ Herald will:
           }
 
           // Success - AI reflection sent to CEDA
+          await emitProgress(4, 4);
           return {
             content: [{
               type: "text",
@@ -3381,17 +3416,28 @@ Herald will:
         const category = args?.category as string;
         const period = args?.period as string | undefined;
         const org = (args?.org as string) || HERALD_ORG;
+        const includeViz = args?.include_visualization as boolean | undefined;
 
         const params = new URLSearchParams();
         if (period) params.set("period", period);
         params.set("org", org);
+        if (includeViz) params.set("include_visualization", "true");
 
         const endpoint = `/api/analytics/${category}${params.toString() ? '?' + params.toString() : ''}`;
         const result = await callCedaAPI(endpoint);
 
-        return {
-          content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
-        };
+        const content: Array<{ type: string; text?: string; data?: string; mimeType?: string }> = [
+          { type: "text", text: JSON.stringify(result, null, 2) },
+        ];
+
+        if (includeViz && result && typeof result === "object" && "visualization" in (result as Record<string, unknown>)) {
+          const viz = (result as Record<string, unknown>).visualization as { data: string; mimeType: string } | undefined;
+          if (viz?.data) {
+            content.push({ type: "image", data: viz.data, mimeType: viz.mimeType || "image/png" });
+          }
+        }
+
+        return { content };
       }
 
       case "herald_query_reflections": {
@@ -3415,6 +3461,7 @@ Herald will:
         const query = args?.query as string;
         const limit = (args?.limit as number) || 5;
         const org = (args?.org as string) || HERALD_ORG;
+        const engagementCtx = args?.engagement_context as Record<string, unknown> | undefined;
 
         const result = await callCedaAPI('/api/documents/search', 'POST', {
           query,
@@ -3422,6 +3469,7 @@ Herald will:
           user: 'herald',
           type: 'knowledge',
           limit,
+          engagement_context: engagementCtx,
         });
 
         return {
