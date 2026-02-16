@@ -1880,6 +1880,28 @@ Returns all patterns for the current context (org/project/user) in the specified
     },
   },
   {
+    name: "herald_search_knowledge",
+    description: "Search the private knowledge base using semantic search for organizational documentation.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: {
+          type: "string",
+          description: "Natural language search query",
+        },
+        limit: {
+          type: "number",
+          description: "Maximum number of results (default: 5)",
+        },
+        org: {
+          type: "string",
+          description: "Organization slug (optional, defaults to HERALD_ORG)",
+        },
+      },
+      required: ["query"],
+    },
+  },
+  {
     name: "herald_scaffold_module",
     description: "Scaffold a new module directory structure for EMEX-X application.",
     inputSchema: {
@@ -3394,15 +3416,12 @@ Herald will:
         const limit = (args?.limit as number) || 5;
         const org = (args?.org as string) || HERALD_ORG;
 
-        const result = await callCedaAPI('/api/documents/search', {
-          method: 'POST',
-          body: JSON.stringify({
-            query,
-            org,
-            user: 'herald',
-            type: 'knowledge',
-            limit,
-          }),
+        const result = await callCedaAPI('/api/documents/search', 'POST', {
+          query,
+          org,
+          user: 'herald',
+          type: 'knowledge',
+          limit,
         });
 
         return {
