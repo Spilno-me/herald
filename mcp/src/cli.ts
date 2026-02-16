@@ -524,11 +524,11 @@ interface BufferedInsight {
   user: string;
   bufferedAt: string;
   // CEDA-100: Track buffer type for proper sync routing
-  type?: 'insight' | 'reflection';
-  // Reflection-specific fields (when type='reflection')
+  type?: 'insight' | 'reflection' | 'observation';
+  // Reflection-specific fields (when type='reflection' or 'observation')
   feeling?: 'stuck' | 'success';
   session?: string;
-  method?: 'direct' | 'simulation';
+  method?: 'direct' | 'simulation' | 'observe';
 }
 
 // CEDA-64: Session reflection tracking (in-memory, clears on restart)
@@ -1622,6 +1622,52 @@ Shows what would be redacted and final transmitted text.`,
         },
       },
       required: ["session", "feeling", "insight"],
+    },
+  },
+  // Capture raw observation (Level 0) - feeds into graduation pipeline
+  {
+    name: "herald_observe",
+    description: `Capture a raw observation (Level 0) for later pattern graduation.
+
+Unlike herald_reflect (Level 1, pre-validated), observations are raw signals that
+feed into CEDA's clustering pipeline. When enough similar observations accumulate,
+they auto-graduate into patterns.
+
+WHEN TO USE:
+- You notice something interesting but aren't sure if it's a pattern yet
+- Recording a data point without committing to "pattern" or "antipattern"
+- Logging what happened for later analysis
+- "That's interesting..." moments
+
+WHEN TO USE herald_reflect INSTEAD:
+- You're confident it IS a pattern or antipattern
+- User explicitly says "capture this" / "log this pattern"
+- Clear success or failure signal
+
+Example flow:
+1. User tries a new approach → herald_observe (raw signal)
+2. Same approach works 3x → CEDA auto-graduates to pattern
+3. User confirms it's reliable → herald_reflect (validated)
+
+TRIGGER WORDS: "observe", "note this", "interesting", "log observation", "raw signal"`,
+    inputSchema: {
+      type: "object",
+      properties: {
+        input: {
+          type: "string",
+          description: "What was observed — the raw signal or event"
+        },
+        outcome: {
+          type: "string",
+          enum: ["accepted", "modified", "rejected"],
+          description: "How it turned out: accepted (worked), modified (worked with changes), rejected (didn't work)"
+        },
+        feedback: {
+          type: "string",
+          description: "Optional context or notes about the observation"
+        },
+      },
+      required: ["input", "outcome"],
     },
   },
   // Query learned patterns - Claude reads this to avoid repeating mistakes
@@ -2729,6 +2775,126 @@ Herald will:
                 hint: "Use herald_sync when cloud recovers.",
                 buffered: true,
                 sanitized: sessionPreview.wouldSanitize || insightPreview.wouldSanitize,
+              }, null, 2)
+            }],
+          };
+        }
+      }
+
+      case "herald_observe": {
+        const input = args?.input as string;
+        const outcome = args?.outcome as string;
+        const feedback = args?.feedback as string | undefined;
+
+        if (!input || !outcome) {
+          return {
+            content: [{ type: "text", text: JSON.stringify({ error: "Missing required fields: input and outcome" }) }],
+            isError: true,
+          };
+        }
+
+        // Sanitize before transmission
+        const inputPreview = previewSanitization(input);
+        const feedbackPreview = feedback ? previewSanitization(feedback) : null;
+
+        if (inputPreview.wouldBlock || feedbackPreview?.wouldBlock) {
+          return {
+            content: [{
+              type: "text",
+              text: JSON.stringify({
+                success: false,
+                error: "Content contains restricted data that cannot be transmitted",
+                blockReason: inputPreview.blockReason || feedbackPreview?.blockReason,
+                hint: "Remove private keys, credentials, or other restricted data before observing.",
+              }, null, 2)
+            }],
+            isError: true,
+          };
+        }
+
+        try {
+          const result = await callCedaAPI("/api/observations", "POST", {
+            input: inputPreview.sanitized,
+            outcome,
+            feedback: feedbackPreview?.sanitized,
+            source: "herald",
+            org: HERALD_ORG,
+            project: HERALD_PROJECT,
+            user: HERALD_USER,
+          });
+
+          if (result.error) {
+            // Buffer locally if cloud unavailable
+            bufferInsight({
+              insight: inputPreview.sanitized,
+              session: `observation: ${outcome}`,
+              feeling: outcome === "rejected" ? "stuck" : "success",
+              method: "observe",
+              type: "observation",
+              topic: "observation",
+              org: HERALD_ORG,
+              project: HERALD_PROJECT,
+              user: HERALD_USER,
+            });
+
+            return {
+              content: [{
+                type: "text",
+                text: JSON.stringify({
+                  success: true,
+                  mode: "local",
+                  message: "Observation buffered locally (cloud unavailable)",
+                  level: 0,
+                  hint: "Use herald_sync to flush buffer when cloud recovers.",
+                  buffered: true,
+                }, null, 2)
+              }],
+            };
+          }
+
+          return {
+            content: [{
+              type: "text",
+              text: JSON.stringify({
+                success: true,
+                mode: "cloud",
+                level: 0,
+                message: `Observation captured: "${input.substring(0, 80)}"`,
+                outcome,
+                observationId: result.observationId,
+                context: {
+                  org: HERALD_ORG,
+                  project: HERALD_PROJECT,
+                },
+                graduation: "Will auto-graduate to pattern when similar observations cluster (3+ needed)",
+                ...result,
+              }, null, 2)
+            }],
+          };
+        } catch {
+          // Network error - buffer locally
+          bufferInsight({
+            insight: inputPreview.sanitized,
+            session: `observation: ${outcome}`,
+            feeling: outcome === "rejected" ? "stuck" : "success",
+            method: "observe",
+            type: "observation",
+            topic: "observation",
+            org: HERALD_ORG,
+            project: HERALD_PROJECT,
+            user: HERALD_USER,
+          });
+
+          return {
+            content: [{
+              type: "text",
+              text: JSON.stringify({
+                success: true,
+                mode: "local",
+                message: "Observation buffered locally (network error)",
+                level: 0,
+                hint: "Use herald_sync when cloud recovers.",
+                buffered: true,
               }, null, 2)
             }],
           };
