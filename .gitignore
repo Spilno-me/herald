@@ -1,7 +1,9 @@
 node_modules/
 dist/
-.yarn/
-.yarnrc.yml
+.yarn/*
+!.yarn/releases
+!.yarn/plugins
+.pnp.*
 package-lock.json
 *.log
 .DS_Store

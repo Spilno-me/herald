@@ -2,28 +2,28 @@ name: CI
 
 on:
   push:
+    branches: ['**']
   pull_request:
+    branches: ['**']
 
 jobs:
   ci:
-    name: Typecheck, Test & Build
     runs-on: ubuntu-latest
-
-    strategy:
-      matrix:
-        node-version: [18, 20, 22]
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Use Node.js ${{ matrix.node-version }}
-        uses: actions/setup-node@v4
+      - run: corepack enable
+
+      - uses: actions/setup-node@v4
         with:
-          node-version: ${{ matrix.node-version }}
+          node-version: 24
           cache: yarn
 
-      - name: Install dependencies
-        run: yarn install --frozen-lockfile
+      - run: yarn install --immutable
+
+      - name: Lint
+        run: yarn workspace @spilno/herald-mcp lint
 
       - name: Typecheck
         run: yarn workspace @spilno/herald-mcp typecheck
