@@ -2,7 +2,9 @@
   "name": "herald",
   "private": true,
   "description": "Herald - Pattern SDK & integrations for CEDA",
-  "workspaces": ["mcp"],
+  "workspaces": [
+    "mcp"
+  ],
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Spilno-me/herald.git"

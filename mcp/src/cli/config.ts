@@ -8,26 +8,8 @@
  * Usage: npx @spilno/herald-mcp config [--client cursor]
  */
 
-import { existsSync, readFileSync } from "fs";
-import { homedir } from "os";
-import { join, basename } from "path";
-
-const CONFIG_DIR = join(homedir(), ".herald");
-const TOKEN_FILE = join(CONFIG_DIR, "token.json");
-
-interface AuthConfig {
-  token: string;
-  user: { login: string };
-}
-
-function getStoredAuth(): AuthConfig | null {
-  if (!existsSync(TOKEN_FILE)) return null;
-  try {
-    return JSON.parse(readFileSync(TOKEN_FILE, "utf-8"));
-  } catch {
-    return null;
-  }
-}
+import { basename } from "path";
+import { type AuthConfig, getStoredAuth } from "../shared/auth.js";
 
 export interface ConfigOptions {
   help?: boolean;

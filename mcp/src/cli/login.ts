@@ -8,64 +8,19 @@
  * Usage: npx @spilno/herald-mcp login
  */
 
-import { existsSync, mkdirSync, writeFileSync, readFileSync } from "fs";
-import { homedir } from "os";
-import { join } from "path";
+import { existsSync, mkdirSync, writeFileSync } from "fs";
 import { createServer } from "http";
-import { exec } from "child_process";
+import { getCedaUrl, CONFIG_DIR, TOKEN_FILE } from "../shared/paths.js";
+import { type AuthConfig, getStoredAuth, openBrowser } from "../shared/auth.js";
+export type { AuthConfig };
 
-const CEDA_URL = process.env.CEDA_URL || "https://getceda.com";
-const CONFIG_DIR = join(homedir(), ".herald");
-const TOKEN_FILE = join(CONFIG_DIR, "token.json");
-
-export interface AuthConfig {
-  token: string;
-  refreshToken?: string;
-  expiresAt: string;
-  user: {
-    login: string;
-    email?: string;
-  };
-}
-
-function getStoredAuth(): AuthConfig | null {
-  if (!existsSync(TOKEN_FILE)) return null;
-  try {
-    const data = JSON.parse(readFileSync(TOKEN_FILE, "utf-8"));
-    // Check if expired
-    if (new Date(data.expiresAt) < new Date()) {
-      return null;
-    }
-    return data;
-  } catch {
-    return null;
-  }
-}
+const CEDA_URL = getCedaUrl();
 
 function storeAuth(auth: AuthConfig): void {
   if (!existsSync(CONFIG_DIR)) {
     mkdirSync(CONFIG_DIR, { recursive: true });
   }
   writeFileSync(TOKEN_FILE, JSON.stringify(auth, null, 2), "utf-8");
-}
-
-function openBrowser(url: string): void {
-  const platform = process.platform;
-  let cmd: string;
-
-  if (platform === "darwin") {
-    cmd = `open "${url}"`;
-  } else if (platform === "win32") {
-    cmd = `start "${url}"`;
-  } else {
-    cmd = `xdg-open "${url}"`;
-  }
-
-  exec(cmd, (err) => {
-    if (err) {
-      console.log(`\nCould not open browser. Please visit:\n${url}\n`);
-    }
-  });
 }
 
 export interface LoginOptions {

@@ -1,6 +1,7 @@
 import * as readline from 'readline';
+import { getCedaUrl } from "../shared/paths.js";
 
-const BASE_URL = process.env.CEDA_URL || process.env.HERALD_API_URL || 'https://getceda.com';
+const BASE_URL = getCedaUrl();
 
 export async function runChat(): Promise<void> {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });

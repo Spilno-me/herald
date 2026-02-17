@@ -8,11 +8,7 @@
  */
 
 import { existsSync, unlinkSync, readFileSync } from "fs";
-import { homedir } from "os";
-import { join } from "path";
-
-const CONFIG_DIR = join(homedir(), ".herald");
-const TOKEN_FILE = join(CONFIG_DIR, "token.json");
+import { TOKEN_FILE } from "../shared/paths.js";
 
 export interface LogoutOptions {
   help?: boolean;
