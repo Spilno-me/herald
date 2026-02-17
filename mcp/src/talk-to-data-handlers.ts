@@ -10,6 +10,9 @@ import type { HandlerDeps, ToolContent, ToolResult } from "./handlers/types.js";
 // Re-export for backward compatibility with existing tests/consumers
 export type { HandlerDeps, ToolContent, ToolResult };
 
+const DEFAULT_SEARCH_LIMIT = 5;
+const DEFAULT_MODULE_VERSION = "1.0.0";
+
 export interface ScaffoldFsDeps {
   existsSync: (p: string) => boolean;
   mkdirSync: (p: string, opts?: { recursive?: boolean }) => void;
@@ -98,7 +101,7 @@ export async function handleSearchKnowledge(
   deps: HandlerDeps,
 ): Promise<ToolResult> {
   const query = args.query as string;
-  const limit = (args.limit as number) || 5;
+  const limit = (args.limit as number) || DEFAULT_SEARCH_LIMIT;
   const org = (args.org as string) || deps.config.org;
   const engagementCtx = args.engagement_context as Record<string, unknown> | undefined;
 
@@ -142,7 +145,7 @@ export function handleScaffoldModule(
     if (!fs.existsSync(configDir)) fs.mkdirSync(configDir, { recursive: true });
 
     // Generate module.yml
-    const moduleYml = `name: ${displayName}\nversion: 1.0.0\ndescription: ${description}\nentities: ${JSON.stringify(entities.map(e => e.name))}`;
+    const moduleYml = `name: ${displayName}\nversion: ${DEFAULT_MODULE_VERSION}\ndescription: ${description}\nentities: ${JSON.stringify(entities.map(e => e.name))}`;
     fs.writeFileSync(join(configDir, "module.yml"), moduleYml);
 
     // Generate seed.ts

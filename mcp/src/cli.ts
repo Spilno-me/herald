@@ -32,13 +32,13 @@ import { sanitize, previewSanitization, sanitizeReflection, DataClassification }
 import { buildEngagementContext, handleQueryAnalytics, handleQueryReflections, handleSearchKnowledge, handleScaffoldModule } from "./talk-to-data-handlers.js";
 import { getCedaUrl, TOKEN_FILE } from "./shared/paths.js";
 import { type GitInfo, getGitRemote, deriveUser, deriveTags } from "./shared/git-utils.js";
-import { isTokenExpired, loadStoredTokens, persistTokens } from "./shared/auth.js";
+import { isTokenExpired, getCedaToken, loadStoredTokens, persistTokens } from "./shared/auth.js";
 import { fetchWithTimeout } from "./shared/api-client.js";
 
 const CEDA_API_URL = getCedaUrl();
 
 const globalTokens = loadStoredTokens();
-let CEDA_API_TOKEN = process.env.CEDA_TOKEN || process.env.HERALD_API_TOKEN || globalTokens.token;
+let CEDA_API_TOKEN = getCedaToken();
 let CEDA_REFRESH_TOKEN = globalTokens.refreshToken;
 
 // Mutex: serialize concurrent refresh attempts so only one network call fires

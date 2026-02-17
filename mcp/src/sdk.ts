@@ -19,7 +19,7 @@
 
 import { getGitRemote, deriveUser, deriveTags } from "./shared/git-utils.js";
 import { getCedaUrl } from "./shared/paths.js";
-import { loadStoredTokens, persistTokens } from "./shared/auth.js";
+import { getCedaToken, loadStoredTokens, persistTokens } from "./shared/auth.js";
 import { createApiClient, type ApiClient } from "./shared/api-client.js";
 
 export interface Pattern {
@@ -71,7 +71,7 @@ function getBaseUrl(): string {
 }
 
 function getToken(): string | undefined {
-  return sdkConfig.token || process.env.CEDA_TOKEN || process.env.HERALD_API_TOKEN || loadStoredTokens().token;
+  return sdkConfig.token || getCedaToken();
 }
 
 function getContext(): { org: string; project: string; user: string } {

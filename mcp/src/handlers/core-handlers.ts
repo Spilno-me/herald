@@ -15,6 +15,8 @@ import type {
 } from "./types.js";
 import { buildEngagementContext } from "../talk-to-data-handlers.js";
 
+const MAX_AUTO_FIX_ATTEMPTS = 3;
+
 // ---------------------------------------------------------------------------
 // Extended deps for core handlers
 // ---------------------------------------------------------------------------
@@ -315,7 +317,7 @@ export async function handlePredict(
     context,
     sessionId,
     participant,
-    config: { enableAutoFix: true, maxAutoFixAttempts: 3 },
+    config: { enableAutoFix: true, maxAutoFixAttempts: MAX_AUTO_FIX_ATTEMPTS },
   });
   await deps.emitProgress(2, 3);
 

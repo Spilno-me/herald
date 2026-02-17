@@ -17,6 +17,8 @@ import type {
   TrustLevel,
 } from "./types.js";
 
+const REFLECTIONS_QUERY_LIMIT = 50;
+
 // ---------------------------------------------------------------------------
 // Extended deps for pattern handlers
 // ---------------------------------------------------------------------------
@@ -239,9 +241,9 @@ export async function handlePatterns(
 
     // Level-gated cascade: user sees own (any level), project sees level>=2, org sees level>=3
     const queries = [
-      { scope: "user", url: `/api/herald/reflections?org=${deps.config.org}&project=${deps.config.project}&user=${deps.config.user}&limit=50` },
-      { scope: "project", url: `/api/herald/reflections?org=${deps.config.org}&project=${deps.config.project}&minLevel=2&limit=50` },
-      { scope: "org", url: `/api/herald/reflections?org=${deps.config.org}&minLevel=3&limit=50` },
+      { scope: "user", url: `/api/herald/reflections?org=${deps.config.org}&project=${deps.config.project}&user=${deps.config.user}&limit=${REFLECTIONS_QUERY_LIMIT}` },
+      { scope: "project", url: `/api/herald/reflections?org=${deps.config.org}&project=${deps.config.project}&minLevel=2&limit=${REFLECTIONS_QUERY_LIMIT}` },
+      { scope: "org", url: `/api/herald/reflections?org=${deps.config.org}&minLevel=3&limit=${REFLECTIONS_QUERY_LIMIT}` },
     ];
 
     const patterns: PatternEntry[] = [];

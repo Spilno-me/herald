@@ -5,6 +5,8 @@
  * with different auth, timeout, and error handling strategies.
  */
 
+export const DEFAULT_TIMEOUT_MS = 10_000;
+
 export interface ApiClientConfig {
   /** Base URL for all requests (e.g. "https://getceda.com") */
   baseUrl: string;
@@ -15,7 +17,7 @@ export interface ApiClientConfig {
   /** Tenant context for request enrichment */
   context: { org: string; project: string; user: string };
 
-  /** Request timeout in ms. Default: 10_000 */
+  /** Request timeout in ms. Default: DEFAULT_TIMEOUT_MS (10s) */
   timeoutMs?: number;
 
   /**
@@ -46,7 +48,7 @@ export interface ApiClient {
 export async function fetchWithTimeout(
   url: string,
   options: RequestInit,
-  timeoutMs: number = 10_000,
+  timeoutMs: number = DEFAULT_TIMEOUT_MS,
 ): Promise<Response> {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
@@ -82,7 +84,7 @@ export function createApiClient(config: ApiClientConfig): ApiClient {
     baseUrl,
     getAuthHeader,
     context,
-    timeoutMs = 10_000,
+    timeoutMs = DEFAULT_TIMEOUT_MS,
     needsTenantParams = () => true,
     onRefreshToken,
   } = config;

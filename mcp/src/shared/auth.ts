@@ -55,6 +55,23 @@ export function openBrowser(url: string): void {
   });
 }
 
+/**
+ * Resolve the CEDA API token.
+ * Priority: CEDA_TOKEN > HERALD_API_TOKEN (deprecated) > stored token.
+ */
+export function getCedaToken(): string | undefined {
+  if (process.env.CEDA_TOKEN) {
+    return process.env.CEDA_TOKEN;
+  }
+
+  if (process.env.HERALD_API_TOKEN) {
+    console.error("[Herald] HERALD_API_TOKEN is deprecated, use CEDA_TOKEN instead");
+    return process.env.HERALD_API_TOKEN;
+  }
+
+  return loadStoredTokens().token;
+}
+
 export interface StoredTokens {
   token?: string;
   refreshToken?: string;
@@ -112,6 +129,8 @@ export function persistTokens(
   }
 }
 
+const TOKEN_EXPIRY_GRACE_MS = 60_000;
+
 /**
  * Check if a JWT token is expired (with 60s grace period).
  */
@@ -119,7 +138,7 @@ export function isTokenExpired(token: string): boolean {
   try {
     const payload = JSON.parse(Buffer.from(token.split(".")[1], "base64").toString());
     if (!payload.exp) return true;
-    return payload.exp * 1000 < Date.now() + 60_000;
+    return payload.exp * 1000 < Date.now() + TOKEN_EXPIRY_GRACE_MS;
   } catch {
     return true;
   }

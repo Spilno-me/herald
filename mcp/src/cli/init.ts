@@ -14,6 +14,7 @@ import { homedir } from "os";
 import { updateClaudeMdContent, fetchLearnedPatterns, type HeraldContext } from "./templates/claude-md.js";
 import { getHookifyRulesContent } from "./templates/hookify-rules.js";
 import { deriveUser } from "../shared/git-utils.js";
+import { DEFAULT_CEDA_URL } from "../shared/paths.js";
 
 function buildHeraldConfig() {
   // CEDA-105: Pure git derivation - no HERALD_* env vars needed
