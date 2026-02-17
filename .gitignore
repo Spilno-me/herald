@@ -3,6 +3,5 @@ dist/
 .yarn/
 .yarnrc.yml
 package-lock.json
-yarn.lock
 *.log
 .DS_Store
