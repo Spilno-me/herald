@@ -10,17 +10,11 @@
 
 import { existsSync, mkdirSync, writeFileSync, readFileSync } from "fs";
 import { join, basename } from "path";
-import { userInfo, homedir } from "os";
+import { homedir } from "os";
 import { updateClaudeMdContent, fetchLearnedPatterns, type HeraldContext } from "./templates/claude-md.js";
 import { getHookifyRulesContent } from "./templates/hookify-rules.js";
-
-function deriveUser(): string {
-  try {
-    return userInfo().username;
-  } catch {
-    return "unknown";
-  }
-}
+import { deriveUser } from "../shared/git-utils.js";
+import { DEFAULT_CEDA_URL } from "../shared/paths.js";
 
 function buildHeraldConfig() {
   // CEDA-105: Pure git derivation - no HERALD_* env vars needed

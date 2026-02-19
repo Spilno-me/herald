@@ -17,7 +17,7 @@ import {
   Resource,
 } from "@modelcontextprotocol/sdk/types.js";
 import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync } from "fs";
-import { homedir, userInfo } from "os";
+import { homedir } from "os";
 import { join, basename, dirname } from "path";
 import { createHash } from "crypto";
 import * as readline from "readline";
@@ -29,43 +29,16 @@ import { runConfig } from "./cli/config.js";
 import { runUpgrade } from "./cli/upgrade.js";
 import { runChat } from "./cli/chat.js";
 import { sanitize, previewSanitization, sanitizeReflection, DataClassification } from "./sanitization.js";
+import { buildEngagementContext, handleQueryAnalytics, handleQueryReflections, handleSearchKnowledge, handleScaffoldModule } from "./talk-to-data-handlers.js";
+import { getCedaUrl, TOKEN_FILE } from "./shared/paths.js";
+import { type GitInfo, getGitRemote, deriveUser, deriveTags } from "./shared/git-utils.js";
+import { isTokenExpired, getCedaToken, loadStoredTokens, persistTokens } from "./shared/auth.js";
+import { fetchWithTimeout } from "./shared/api-client.js";
 
-// Configuration - all sensitive values from environment only
-// CEDA_URL is primary, HERALD_API_URL for backwards compat, default to cloud
-const CEDA_API_URL = process.env.CEDA_URL || process.env.HERALD_API_URL || "https://getceda.com";
-// CEDA_TOKEN is the primary auth (from app.getceda.com OAuth)
-// HERALD_API_TOKEN kept for backwards compatibility
-// CEDA-FIX: Also check ~/.herald/token.json for global token (one key per user)
-const TOKEN_FILE_PATH = join(homedir(), ".herald", "token.json");
+const CEDA_API_URL = getCedaUrl();
 
-function loadGlobalToken(): { token?: string; refreshToken?: string } {
-  try {
-    if (existsSync(TOKEN_FILE_PATH)) {
-      const data = JSON.parse(readFileSync(TOKEN_FILE_PATH, "utf-8"));
-      return {
-        token: data.token || undefined,
-        refreshToken: data.refreshToken || undefined,
-      };
-    }
-  } catch {
-    // Ignore errors reading global token
-  }
-  return {};
-}
-
-function isTokenExpired(token: string): boolean {
-  try {
-    const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString());
-    if (!payload.exp) return true;
-    // Consider expired if less than 60s remaining
-    return payload.exp * 1000 < Date.now() + 60_000;
-  } catch {
-    return true;
-  }
-}
-
-const globalTokens = loadGlobalToken();
-let CEDA_API_TOKEN = process.env.CEDA_TOKEN || process.env.HERALD_API_TOKEN || globalTokens.token;
+const globalTokens = loadStoredTokens();
+let CEDA_API_TOKEN = getCedaToken();
 let CEDA_REFRESH_TOKEN = globalTokens.refreshToken;
 
 // Mutex: serialize concurrent refresh attempts so only one network call fires
@@ -108,26 +81,7 @@ async function doRefreshAccessToken(): Promise<boolean> {
     CEDA_API_TOKEN = data.accessToken;
     CEDA_REFRESH_TOKEN = data.refreshToken;
 
-    // Write updated tokens back to disk
-    try {
-      if (existsSync(TOKEN_FILE_PATH)) {
-        const existing = JSON.parse(readFileSync(TOKEN_FILE_PATH, "utf-8"));
-        existing.token = data.accessToken;
-        existing.refreshToken = data.refreshToken;
-        // Update expiresAt from new token
-        try {
-          const payload = JSON.parse(Buffer.from(data.accessToken.split('.')[1], 'base64').toString());
-          existing.expiresAt = payload.exp
-            ? new Date(payload.exp * 1000).toISOString()
-            : new Date(Date.now() + data.expiresIn * 1000).toISOString();
-        } catch {
-          existing.expiresAt = new Date(Date.now() + data.expiresIn * 1000).toISOString();
-        }
-        writeFileSync(TOKEN_FILE_PATH, JSON.stringify(existing, null, 2), "utf-8");
-      }
-    } catch {
-      // Non-fatal: token works in memory even if disk write fails
-    }
+    persistTokens(data.accessToken, data.refreshToken, data.expiresIn);
 
     console.error("[Herald] Token refreshed");
     return true;
@@ -139,119 +93,10 @@ async function doRefreshAccessToken(): Promise<boolean> {
 const CEDA_API_USER = process.env.HERALD_API_USER;
 const CEDA_API_PASS = process.env.HERALD_API_PASS;
 
-// CEDA-70: Zero-config context - everything auto-derived, nothing required
-// User is ALWAYS known (whoami). Org/project inferred from path as tags.
-
-function deriveUser(): string {
-  // Priority: git user > env var > OS user
-  // Git user is trusted (immutable identity from git config)
-  const gitUser = getGitUser();
-  if (gitUser) return gitUser;
-
-  try {
-    return userInfo().username;
-  } catch {
-    return "unknown";
-  }
-}
-
-function deriveTags(): string[] {
-  // Derive tags from cwd path - last 2 meaningful segments
-  // /Users/john/projects/acme/backend → ["acme", "backend"]
-  try {
-    const cwd = process.cwd();
-    const parts = cwd.split("/").filter(p => p && !["Users", "home", "Documents", "projects", "repos", "GitHub"].includes(p));
-    return parts.slice(-2);  // Last 2 segments as tags
-  } catch {
-    return [];
-  }
-}
-
 // ADR-001: Git-based trust model
 // Git remote = unforgeable identity. Can't claim repo access without having it.
 
 type TrustLevel = 'HIGH' | 'LOW';
-
-interface GitInfo {
-  remote: string | null;
-  org: string | null;
-  repo: string | null;
-}
-
-function findGitRoot(startPath: string): string | null {
-  let current = startPath;
-  while (current !== '/') {
-    if (existsSync(join(current, '.git'))) {
-      return current;
-    }
-    current = dirname(current);
-  }
-  return null;
-}
-
-function getGitRemote(): GitInfo {
-  try {
-    const gitRoot = findGitRoot(process.cwd());
-    if (!gitRoot) return { remote: null, org: null, repo: null };
-
-    const configPath = join(gitRoot, '.git', 'config');
-    if (!existsSync(configPath)) return { remote: null, org: null, repo: null };
-
-    const config = readFileSync(configPath, 'utf-8');
-
-    // Parse [remote "origin"] url = ...
-    const remoteMatch = config.match(/\[remote "origin"\][^\[]*url\s*=\s*(.+)/m);
-    if (!remoteMatch) return { remote: null, org: null, repo: null };
-
-    const remoteUrl = remoteMatch[1].trim();
-
-    // Normalize: git@github.com:org/repo.git → github.com/org/repo
-    // https://github.com/org/repo.git → github.com/org/repo
-    let normalized = remoteUrl
-      .replace(/^git@/, '')
-      .replace(/^https?:\/\//, '')
-      .replace(/:/, '/')
-      .replace(/\.git$/, '');
-
-    // Extract org and repo
-    const parts = normalized.split('/');
-    const repo = parts.pop() || null;
-    const org = parts.pop() || null;
-
-    return { remote: normalized, org, repo };
-  } catch {
-    return { remote: null, org: null, repo: null };
-  }
-}
-
-// Git-based user identity (trusted - derived from git config)
-function getGitUser(): string | null {
-  try {
-    const gitRoot = findGitRoot(process.cwd());
-    if (!gitRoot) return null;
-
-    const configPath = join(gitRoot, '.git', 'config');
-    if (!existsSync(configPath)) return null;
-
-    const config = readFileSync(configPath, 'utf-8');
-
-    // Check local git config first: [user] name = ...
-    const nameMatch = config.match(/\[user\][^\[]*name\s*=\s*(.+)/m);
-    if (nameMatch) return nameMatch[1].trim();
-
-    // Fall back to global git config
-    const globalConfigPath = join(homedir(), '.gitconfig');
-    if (existsSync(globalConfigPath)) {
-      const globalConfig = readFileSync(globalConfigPath, 'utf-8');
-      const globalNameMatch = globalConfig.match(/\[user\][^\[]*name\s*=\s*(.+)/m);
-      if (globalNameMatch) return globalNameMatch[1].trim();
-    }
-
-    return null;
-  } catch {
-    return null;
-  }
-}
 
 function hashTag(input: string): string {
   // Create short, deterministic hash for tag
@@ -666,30 +511,6 @@ function getContextString(): string {
 // CEDA-104: Helper for fetch with timeout - prevents CPU spin on slow/unreachable APIs
 const AI_REQUEST_TIMEOUT_MS = 30000; // 30 seconds for AI APIs (they can be slow)
 
-async function fetchWithTimeout(
-  url: string,
-  options: RequestInit,
-  timeoutMs: number = AI_REQUEST_TIMEOUT_MS
-): Promise<Response> {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-
-  try {
-    const response = await fetch(url, {
-      ...options,
-      signal: controller.signal,
-    });
-    clearTimeout(timeoutId);
-    return response;
-  } catch (error) {
-    clearTimeout(timeoutId);
-    if (error instanceof Error && error.name === 'AbortError') {
-      throw new Error(`Request timeout after ${timeoutMs}ms`);
-    }
-    throw error;
-  }
-}
-
 const HERALD_SYSTEM_PROMPT = `You are Herald, the voice of CEDA (Cognitive Event-Driven Architecture).
 You help humans design module structures through natural conversation.
 
@@ -994,8 +815,8 @@ async function callCedaAPI(endpoint: string, method = "GET", body?: Record<strin
   // Only add tenant params to endpoints that need them (patterns, session queries)
   // Don't add to simple endpoints like /api/stats, /health
   const needsTenantParams = endpoint.startsWith("/api/patterns") ||
-                            endpoint.startsWith("/api/session/") ||
-                            endpoint.startsWith("/api/observations");
+    endpoint.startsWith("/api/session/") ||
+    endpoint.startsWith("/api/observations");
   if (method === "GET" && needsTenantParams) {
     const separator = endpoint.includes("?") ? "&" : "?";
     url += `${separator}org=${HERALD_ORG}&project=${HERALD_PROJECT}&user=${HERALD_USER}`;
@@ -1417,6 +1238,7 @@ Example flow:
         context: { type: "string", description: "Additional context" },
         session_id: { type: "string", description: "Session ID for multi-turn" },
         participant: { type: "string", description: "Participant name" },
+        engagement_context: { type: "object", description: "Learned preferences and context from EMEX engagement history" },
       },
       required: ["signal"],
     },
@@ -1431,6 +1253,7 @@ Example flow:
         refinement: { type: "string", description: "Refinement instruction" },
         context: { type: "string", description: "Additional context" },
         participant: { type: "string", description: "Participant name" },
+        engagement_context: { type: "object", description: "Learned preferences and context from EMEX engagement history" },
       },
       required: ["session_id", "refinement"],
     },
@@ -1879,6 +1702,122 @@ Returns all patterns for the current context (org/project/user) in the specified
       },
     },
   },
+  {
+    name: "herald_query_analytics",
+    description: "Query company analytics (metrics, trends, patterns, users) for data-driven insights.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        category: {
+          type: "string",
+          enum: ["metrics", "trends", "patterns", "users", "system"],
+          description: "Analytics category to query",
+        },
+        period: {
+          type: "string",
+          enum: ["day", "week", "month", "quarter", "year"],
+          description: "Time period for trends/metrics (optional)",
+        },
+        org: {
+          type: "string",
+          description: "Organization slug (optional, defaults to HERALD_ORG)",
+        },
+        include_visualization: {
+          type: "boolean",
+          description: "When true, include chart/visualization as image content alongside text (if available)",
+        },
+        engagement_context: { type: "object", description: "Learned preferences and context from EMEX engagement history" },
+      },
+      required: ["category"],
+    },
+  },
+  {
+    name: "herald_query_reflections",
+    description: "Query captured reflections (patterns/antipatterns) to summarize past learnings.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        feeling: {
+          type: "string",
+          enum: ["success", "stuck"],
+          description: "Filter by feeling: success (patterns) or stuck (antipatterns)",
+        },
+        project: {
+          type: "string",
+          description: "Project slug (optional)",
+        },
+        limit: {
+          type: "number",
+          description: "Maximum number of reflections to return (default 50)",
+        },
+      },
+    },
+  },
+  {
+    name: "herald_search_knowledge",
+    description: "Search the private knowledge base using semantic search for organizational documentation.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: {
+          type: "string",
+          description: "Natural language search query",
+        },
+        limit: {
+          type: "number",
+          description: "Maximum number of results (default: 5)",
+        },
+        org: {
+          type: "string",
+          description: "Organization slug (optional, defaults to HERALD_ORG)",
+        },
+        engagement_context: { type: "object", description: "Learned preferences and context from EMEX engagement history" },
+      },
+      required: ["query"],
+    },
+  },
+  {
+    name: "herald_scaffold_module",
+    description: "Scaffold a new module directory structure for EMEX-X application.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        module_name: {
+          type: "string",
+          description: "Slug of the module (e.g., 'visitor-management')",
+        },
+        display_name: {
+          type: "string",
+          description: "Human readable name (e.g., 'Visitor Management')",
+        },
+        description: {
+          type: "string",
+          description: "Detailed description of the module's purpose",
+        },
+        entities: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              name: { type: "string" },
+              fields: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    name: { type: "string" },
+                    type: { type: "string" },
+                    required: { type: "boolean" },
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      required: ["module_name", "display_name", "entities"],
+    },
+  },
 ];
 
 server.setRequestHandler(ListToolsRequestSchema, async () => {
@@ -1890,8 +1829,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 // ============================================
 
 // Helper to fetch patterns with cascade (reused from herald_patterns tool)
-async function fetchPatternsWithCascade(): Promise<{patterns: string[], antipatterns: string[], context: string}> {
-  type PatternEntry = {insight: string; scope?: string};
+async function fetchPatternsWithCascade(): Promise<{ patterns: string[], antipatterns: string[], context: string }> {
+  type PatternEntry = { insight: string; scope?: string };
   const seenInsights = new Set<string>();
   const patterns: string[] = [];
   const antipatterns: string[] = [];
@@ -1949,7 +1888,7 @@ server.setRequestHandler(ListResourcesRequestSchema, async () => {
   return { resources };
 });
 
-server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
+server.setRequestHandler(ReadResourceRequestSchema, async (request: any) => {
   const { uri } = request.params;
 
   if (uri === "herald://patterns") {
@@ -2024,8 +1963,21 @@ server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
   throw new Error(`Unknown resource: ${uri}`);
 });
 
-server.setRequestHandler(CallToolRequestSchema, async (request) => {
+server.setRequestHandler(CallToolRequestSchema, async (request: any) => {
   const { name, arguments: args } = request.params;
+  const progressToken = request.params._meta?.progressToken as string | number | undefined;
+
+  async function emitProgress(progress: number, total: number): Promise<void> {
+    if (!progressToken) return;
+    try {
+      await server.notification({
+        method: "notifications/progress",
+        params: { progressToken, progress, total },
+      });
+    } catch {
+      // Progress notification failed — non-critical, continue
+    }
+  }
 
   try {
     switch (name) {
@@ -2253,12 +2205,11 @@ Herald will:
         const contextStr = args?.context as string | undefined;
         const sessionId = args?.session_id as string | undefined;
         const participant = args?.participant as string | undefined;
+        const engagementCtx = args?.engagement_context as Record<string, unknown> | undefined;
 
-        // Convert string context to CEDA's expected array format
-        const context = contextStr
-          ? [{ type: "user_context", value: contextStr, source: "herald" }]
-          : undefined;
+        const context = buildEngagementContext(contextStr, engagementCtx);
 
+        await emitProgress(1, 3);
         const result = await callCedaAPI("/api/predict", "POST", {
           input: signal,
           context,
@@ -2266,10 +2217,13 @@ Herald will:
           participant,
           config: { enableAutoFix: true, maxAutoFixAttempts: 3 },
         });
+        await emitProgress(2, 3);
 
-        return {
+        const response = {
           content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
         };
+        await emitProgress(3, 3);
+        return response;
       }
 
       case "herald_refine": {
@@ -2277,22 +2231,24 @@ Herald will:
         const refinement = args?.refinement as string;
         const contextStr = args?.context as string | undefined;
         const participant = args?.participant as string | undefined;
+        const engagementCtx = args?.engagement_context as Record<string, unknown> | undefined;
 
-        // Convert string context to CEDA's expected array format
-        const context = contextStr
-          ? [{ type: "user_context", value: contextStr, source: "herald" }]
-          : undefined;
+        const context = buildEngagementContext(contextStr, engagementCtx);
 
+        await emitProgress(1, 3);
         const result = await callCedaAPI("/api/refine", "POST", {
           sessionId,
           refinement,
           context,
           participant,
         });
+        await emitProgress(2, 3);
 
-        return {
+        const response = {
           content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
         };
+        await emitProgress(3, 3);
+        return response;
       }
 
       case "herald_session": {
@@ -2905,7 +2861,7 @@ Herald will:
         // Query learned patterns with inheritance: user → project → org
         // More specific patterns take precedence over broader ones
         try {
-          type PatternEntry = {insight: string; signal?: string; reinforcement?: string; warning?: string; scope?: string};
+          type PatternEntry = { insight: string; signal?: string; reinforcement?: string; warning?: string; scope?: string };
 
           // Helper to dedupe patterns by insight text (first occurrence wins)
           const seenInsights = new Set<string>();
@@ -2943,7 +2899,7 @@ Herald will:
           }
 
           const metaResult = await callCedaAPI("/api/herald/meta-patterns");
-          const metaPatterns = (metaResult.metaPatterns as Array<{recommendedMethod: string; confidence: number}>) || [];
+          const metaPatterns = (metaResult.metaPatterns as Array<{ recommendedMethod: string; confidence: number }>) || [];
 
           // Build readable summary with scope indicators
           let summary = `## Learned Patterns for ${HERALD_USER}→${HERALD_PROJECT}→${HERALD_ORG}\n\n`;
@@ -3052,13 +3008,16 @@ Herald will:
 
         try {
           // Build prompt and call AI for reflection (use sanitized input)
+          await emitProgress(1, 4);
           const prompt = buildReflectionPrompt(simSanitizedSession, feeling, simSanitizedInsight);
           const extracted = await callAIForReflection(aiClient, prompt);
+          await emitProgress(2, 4);
 
           // Sanitize AI-extracted fields too
           const sanitizedSignal = sanitize(extracted.signal || "").sanitizedText;
           const sanitizedReinforcement = extracted.reinforcement ? sanitize(extracted.reinforcement).sanitizedText : undefined;
           const sanitizedWarning = extracted.warning ? sanitize(extracted.warning).sanitizedText : undefined;
+          await emitProgress(3, 4);
 
           // Send enriched data to CEDA (all sanitized)
           const result = await callCedaAPI("/api/herald/reflect", "POST", {
@@ -3113,6 +3072,7 @@ Herald will:
           }
 
           // Success - AI reflection sent to CEDA
+          await emitProgress(4, 4);
           return {
             content: [{
               type: "text",
@@ -3155,12 +3115,12 @@ Herald will:
       // CEDA-64: Herald Command Extensions - Handlers
       case "herald_session_reflections": {
         const summary = getSessionReflectionsSummary();
-        
+
         let message = `## Session Reflections Summary\n\n`;
         message += `**Total captured:** ${summary.count}\n`;
         message += `- Patterns (success): ${summary.patterns}\n`;
         message += `- Antipatterns (stuck): ${summary.antipatterns}\n\n`;
-        
+
         if (summary.reflections.length > 0) {
           message += `### Captured This Session:\n`;
           summary.reflections.forEach((r, i) => {
@@ -3170,7 +3130,7 @@ Herald will:
         } else {
           message += `No reflections captured yet. Use herald_reflect or herald_simulate to capture patterns.`;
         }
-        
+
         return {
           content: [{
             type: "text",
@@ -3431,6 +3391,26 @@ Herald will:
             }],
           };
         }
+      }
+
+      case "herald_query_analytics": {
+        const handlerDeps = { callCedaAPI, emitProgress, config: { org: HERALD_ORG, project: HERALD_PROJECT, user: HERALD_USER } };
+        return handleQueryAnalytics(args as Record<string, unknown>, handlerDeps) as any;
+      }
+
+      case "herald_query_reflections": {
+        const handlerDeps = { callCedaAPI, emitProgress, config: { org: HERALD_ORG, project: HERALD_PROJECT, user: HERALD_USER } };
+        return handleQueryReflections(args as Record<string, unknown>, handlerDeps) as any;
+      }
+
+      case "herald_search_knowledge": {
+        const handlerDeps = { callCedaAPI, emitProgress, config: { org: HERALD_ORG, project: HERALD_PROJECT, user: HERALD_USER } };
+        return handleSearchKnowledge(args as Record<string, unknown>, handlerDeps) as any;
+      }
+
+      case "herald_scaffold_module": {
+        const emexRoot = join(dirname(dirname(dirname(dirname(process.cwd())))), "emex-x-application");
+        return handleScaffoldModule(args as Record<string, unknown>, { existsSync, mkdirSync, writeFileSync }, emexRoot) as any;
       }
 
       default:

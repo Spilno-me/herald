@@ -17,9 +17,10 @@
  *   herald.configure({ baseUrl: 'https://custom.ceda.com' });
  */
 
-import { existsSync, readFileSync, writeFileSync } from "fs";
-import { homedir, userInfo } from "os";
-import { join, dirname } from "path";
+import { getGitRemote, deriveUser, deriveTags } from "./shared/git-utils.js";
+import { getCedaUrl } from "./shared/paths.js";
+import { getCedaToken, loadStoredTokens, persistTokens } from "./shared/auth.js";
+import { createApiClient, type ApiClient } from "./shared/api-client.js";
 
 export interface Pattern {
   insight: string;
@@ -41,107 +42,6 @@ export interface HeraldConfig {
   org?: string;
   project?: string;
   user?: string;
-}
-
-interface GitInfo {
-  remote: string | null;
-  org: string | null;
-  repo: string | null;
-}
-
-function findGitRoot(startPath: string): string | null {
-  let current = startPath;
-  while (current !== "/") {
-    if (existsSync(join(current, ".git"))) {
-      return current;
-    }
-    current = dirname(current);
-  }
-  return null;
-}
-
-function getGitRemote(): GitInfo {
-  try {
-    const gitRoot = findGitRoot(process.cwd());
-    if (!gitRoot) return { remote: null, org: null, repo: null };
-
-    const configPath = join(gitRoot, ".git", "config");
-    if (!existsSync(configPath)) return { remote: null, org: null, repo: null };
-
-    const config = readFileSync(configPath, "utf-8");
-
-    const remoteMatch = config.match(/\[remote "origin"\][^\[]*url\s*=\s*(.+)/m);
-    if (!remoteMatch) return { remote: null, org: null, repo: null };
-
-    const remoteUrl = remoteMatch[1].trim();
-
-    let normalized = remoteUrl
-      .replace(/^git@/, "")
-      .replace(/^https?:\/\//, "")
-      .replace(/:/, "/")
-      .replace(/\.git$/, "");
-
-    const parts = normalized.split("/");
-    const repo = parts.pop() || null;
-    const org = parts.pop() || null;
-
-    return { remote: normalized, org, repo };
-  } catch {
-    return { remote: null, org: null, repo: null };
-  }
-}
-
-function getGitUser(): string | null {
-  try {
-    const gitRoot = findGitRoot(process.cwd());
-    if (!gitRoot) return null;
-
-    const configPath = join(gitRoot, ".git", "config");
-    if (!existsSync(configPath)) return null;
-
-    const config = readFileSync(configPath, "utf-8");
-
-    const nameMatch = config.match(/\[user\][^\[]*name\s*=\s*(.+)/m);
-    if (nameMatch) return nameMatch[1].trim();
-
-    const globalConfigPath = join(homedir(), ".gitconfig");
-    if (existsSync(globalConfigPath)) {
-      const globalConfig = readFileSync(globalConfigPath, "utf-8");
-      const globalNameMatch = globalConfig.match(/\[user\][^\[]*name\s*=\s*(.+)/m);
-      if (globalNameMatch) return globalNameMatch[1].trim();
-    }
-
-    return null;
-  } catch {
-    return null;
-  }
-}
-
-function deriveUser(): string {
-  const gitUser = getGitUser();
-  if (gitUser) return gitUser;
-
-  try {
-    return userInfo().username;
-  } catch {
-    return "unknown";
-  }
-}
-
-function deriveTags(): string[] {
-  try {
-    const cwd = process.cwd();
-    const parts = cwd
-      .split("/")
-      .filter(
-        (p) =>
-          p &&
-          !["Users", "home", "Documents", "projects", "repos", "GitHub"].includes(p)
-      );
-    return parts.slice(-2);
-  } catch {
-    return [];
-  }
 }
 
 function deriveContext(): { org: string; project: string; user: string } {
@@ -167,72 +67,11 @@ function deriveContext(): { org: string; project: string; user: string } {
 let sdkConfig: HeraldConfig = {};
 
 function getBaseUrl(): string {
-  return (
-    sdkConfig.baseUrl ||
-    process.env.CEDA_URL ||
-    process.env.HERALD_API_URL ||
-    "https://getceda.com"
-  );
-}
-
-const TOKEN_FILE_PATH = join(homedir(), ".herald", "token.json");
-
-function loadStoredTokens(): { token?: string; refreshToken?: string } {
-  try {
-    if (existsSync(TOKEN_FILE_PATH)) {
-      const data = JSON.parse(readFileSync(TOKEN_FILE_PATH, "utf-8"));
-      return { token: data.token || undefined, refreshToken: data.refreshToken || undefined };
-    }
-  } catch {
-    // ignore
-  }
-  return {};
+  return sdkConfig.baseUrl || getCedaUrl();
 }
 
 function getToken(): string | undefined {
-  return sdkConfig.token || process.env.CEDA_TOKEN || process.env.HERALD_API_TOKEN || loadStoredTokens().token;
-}
-
-async function tryRefreshToken(): Promise<string | null> {
-  const { refreshToken } = loadStoredTokens();
-  if (!refreshToken) return null;
-
-  try {
-    const baseUrl = getBaseUrl();
-    const response = await fetch(`${baseUrl}/api/auth/refresh`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ refreshToken }),
-    });
-
-    if (!response.ok) return null;
-
-    const data = (await response.json()) as { accessToken: string; refreshToken: string; expiresIn: number };
-
-    // Write updated tokens back to disk
-    try {
-      if (existsSync(TOKEN_FILE_PATH)) {
-        const existing = JSON.parse(readFileSync(TOKEN_FILE_PATH, "utf-8"));
-        existing.token = data.accessToken;
-        existing.refreshToken = data.refreshToken;
-        try {
-          const payload = JSON.parse(Buffer.from(data.accessToken.split(".")[1], "base64").toString());
-          existing.expiresAt = payload.exp
-            ? new Date(payload.exp * 1000).toISOString()
-            : new Date(Date.now() + data.expiresIn * 1000).toISOString();
-        } catch {
-          existing.expiresAt = new Date(Date.now() + data.expiresIn * 1000).toISOString();
-        }
-        writeFileSync(TOKEN_FILE_PATH, JSON.stringify(existing, null, 2), "utf-8");
-      }
-    } catch {
-      // Non-fatal
-    }
-
-    return data.accessToken;
-  } catch {
-    return null;
-  }
+  return sdkConfig.token || getCedaToken();
 }
 
 function getContext(): { org: string; project: string; user: string } {
@@ -252,70 +91,52 @@ function getContext(): { org: string; project: string; user: string } {
   };
 }
 
+function getClient(): ApiClient {
+  const baseUrl = getBaseUrl();
+  const context = getContext();
+
+  return createApiClient({
+    baseUrl,
+    getAuthHeader: () => {
+      const token = getToken();
+      return token ? `Bearer ${token}` : null;
+    },
+    context,
+    onRefreshToken: async () => {
+      const { refreshToken } = loadStoredTokens();
+      if (!refreshToken) return null;
+
+      try {
+        const response = await fetch(`${baseUrl}/api/auth/refresh`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ refreshToken }),
+        });
+
+        if (!response.ok) return null;
+
+        const data = (await response.json()) as {
+          accessToken: string;
+          refreshToken: string;
+          expiresIn: number;
+        };
+
+        persistTokens(data.accessToken, data.refreshToken, data.expiresIn);
+
+        return `Bearer ${data.accessToken}`;
+      } catch {
+        return null;
+      }
+    },
+  });
+}
+
 async function callApi(
   endpoint: string,
   method: "GET" | "POST" = "GET",
-  body?: Record<string, unknown>
+  body?: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
-  const baseUrl = getBaseUrl();
-  const token = getToken();
-  const context = getContext();
-
-  let url = `${baseUrl}${endpoint}`;
-
-  if (method === "GET") {
-    const separator = endpoint.includes("?") ? "&" : "?";
-    url += `${separator}org=${encodeURIComponent(context.org)}&project=${encodeURIComponent(context.project)}&user=${encodeURIComponent(context.user)}`;
-  }
-
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-  };
-
-  if (token) {
-    headers["Authorization"] = `Bearer ${token}`;
-  }
-
-  let enrichedBody = body;
-  if (method === "POST" && body) {
-    enrichedBody = {
-      ...body,
-      org: context.org,
-      project: context.project,
-      user: context.user,
-    };
-  }
-
-  const response = await fetch(url, {
-    method,
-    headers,
-    body: enrichedBody ? JSON.stringify(enrichedBody) : undefined,
-  });
-
-  // Auto-refresh on 401 and retry once
-  if (response.status === 401) {
-    await response.text().catch(() => {}); // drain body
-    const newToken = await tryRefreshToken();
-    if (newToken) {
-      headers["Authorization"] = `Bearer ${newToken}`;
-      const retryResponse = await fetch(url, {
-        method,
-        headers,
-        body: enrichedBody ? JSON.stringify(enrichedBody) : undefined,
-      });
-      if (!retryResponse.ok) {
-        throw new Error(`HTTP ${retryResponse.status}: ${retryResponse.statusText}`);
-      }
-      return (await retryResponse.json()) as Record<string, unknown>;
-    }
-    throw new Error("HTTP 401: Unauthorized (token refresh failed)");
-  }
-
-  if (!response.ok) {
-    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-  }
-
-  return (await response.json()) as Record<string, unknown>;
+  return getClient().call(endpoint, method, body);
 }
 
 export const herald = {

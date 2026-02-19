@@ -8,47 +8,10 @@
  * Usage: npx @spilno/herald-mcp upgrade
  */
 
-import { existsSync, readFileSync } from "fs";
-import { homedir } from "os";
-import { join } from "path";
-import { exec } from "child_process";
+import { getCedaUrl } from "../shared/paths.js";
+import { type AuthConfig, getStoredAuth, openBrowser } from "../shared/auth.js";
 
-const CEDA_URL = process.env.CEDA_URL || "https://getceda.com";
-const CONFIG_DIR = join(homedir(), ".herald");
-const TOKEN_FILE = join(CONFIG_DIR, "token.json");
-
-interface AuthConfig {
-  token: string;
-  user: { login: string };
-}
-
-function getStoredAuth(): AuthConfig | null {
-  if (!existsSync(TOKEN_FILE)) return null;
-  try {
-    return JSON.parse(readFileSync(TOKEN_FILE, "utf-8"));
-  } catch {
-    return null;
-  }
-}
-
-function openBrowser(url: string): void {
-  const platform = process.platform;
-  let cmd: string;
-
-  if (platform === "darwin") {
-    cmd = `open "${url}"`;
-  } else if (platform === "win32") {
-    cmd = `start "${url}"`;
-  } else {
-    cmd = `xdg-open "${url}"`;
-  }
-
-  exec(cmd, (err) => {
-    if (err) {
-      console.log(`\nCould not open browser. Please visit:\n${url}\n`);
-    }
-  });
-}
+const CEDA_URL = getCedaUrl();
 
 export interface UpgradeOptions {
   help?: boolean;

@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+    branches: ['**']
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - run: corepack enable
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: yarn
+
+      - run: yarn install --immutable
+
+      - name: Lint
+        run: yarn workspace @spilno/herald-mcp lint
+
+      - name: Typecheck
+        run: yarn workspace @spilno/herald-mcp typecheck
+
+      - name: Test
+        run: yarn workspace @spilno/herald-mcp test
+
+      - name: Build
+        run: yarn workspace @spilno/herald-mcp build
