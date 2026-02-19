@@ -1,6 +1,6 @@
 {
   "name": "@spilno/herald-mcp",
-  "version": "1.36.5",
+  "version": "1.36.6",
   "description": "Herald MCP - AI-native interface to CEDA (Cognitive Event-Driven Architecture)",
   "main": "dist/sdk.js",
   "types": "dist/sdk.d.ts",

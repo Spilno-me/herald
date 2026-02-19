@@ -106,14 +106,14 @@ describe('CEDA-64: Herald Command Extensions', () => {
   });
 
   describe('Version', () => {
-    it('should be version 1.36.5 in index.ts', () => {
-      expect(indexContent).toContain('const VERSION = "1.36.5"');
+    it('should be version 1.36.6 in index.ts', () => {
+      expect(indexContent).toContain('const VERSION = "1.36.6"');
     });
 
     it('should have matching version in package.json', () => {
       const packagePath = path.join(process.cwd(), 'package.json');
       const packageJson = JSON.parse(fs.readFileSync(packagePath, 'utf-8'));
-      expect(packageJson.version).toBe('1.36.5');
+      expect(packageJson.version).toBe('1.36.6');
     });
   });
 
